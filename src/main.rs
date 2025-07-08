@@ -2,13 +2,18 @@ use anyhow::{anyhow, Error};
 use clap::{Parser, ValueEnum};
 use fehler::throws;
 use serde_json::from_str;
-use solana_sdk::{signature::Keypair, signer::keypair::read_keypair_file};
+use solana_sdk::signer::Signer;
+use solana_sdk::{bs58, signature::Keypair, signer::keypair::read_keypair_file};
+use std::path::Path;
 use std::{fmt::Debug, path::PathBuf};
 
 #[derive(Debug, Clone, Parser)]
-#[clap(name = "sbjc", about = "Convert between json format and base58 format")]
+#[clap(
+    name = "solana-address-convert",
+    about = "Convert between json format and base58 format"
+)]
 struct Cli {
-    #[arg(long, short)]
+    #[arg(long, short = 'f', value_parser = validate_file_type)]
     json: Option<String>,
 
     #[arg(long, short)]
@@ -16,6 +21,23 @@ struct Cli {
 
     #[arg(long, short, default_value = "naked")]
     output: OutputFormat,
+}
+
+fn validate_file_type(path: &str) -> Result<String, String> {
+    let path = Path::new(path);
+    if !path.exists() {
+        return Err(format!("文件不存在：{}", path.display()));
+    }
+
+    if !path.is_file() {
+        return Err(format!("不是文件：{}", path.display()));
+    }
+
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("json") => Ok(path.to_string_lossy().into_owned()),
+        Some(ext) => Err(format!("不支持的文件类型：.{}，只支持 json 格式", ext)),
+        None => Err("文件没有扩展名".to_string()),
+    }
 }
 
 #[derive(Debug, Clone, Copy, Parser, ValueEnum)]
@@ -65,7 +87,7 @@ pub fn load_keypair(src: &str) -> Keypair {
 
     match maybe_keypair {
         Ok(keypair) => keypair,
-        Err(_) => Keypair::from_bytes(&bs58::decode(src).into_vec()?)?,
+        Err(_) => Keypair::try_from(bs58::decode(src).into_vec()?.as_slice())?,
     }
 }
 
@@ -80,6 +102,9 @@ fn main() {
     if let Some(json) = cli.json {
         if let Ok(wallet) = load_keypair(&json) {
             wallet.to_base58_string().as_str().output(cli.output);
+            println!();
+            println!("Solana Addr: {}", wallet.pubkey().to_string());
+
             return;
         }
 
@@ -93,6 +118,11 @@ fn main() {
 
     if let Some(b58) = cli.base58 {
         bs58::decode(&b58).into_vec()?.as_slice().output(cli.output);
+
+        let wallet = Keypair::from_base58_string(&b58);
+        println!();
+        println!("Solana Addr: {}", wallet.pubkey().to_string());
+
         return;
     }
 }
